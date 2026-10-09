@@ -342,3 +342,24 @@ Start-Process powershell -Verb RunAs -ArgumentList `
 - `discover_portal_url()` —— 认证前主动索取带令牌的门户地址；
 - `--no-web-probe` —— 关闭「访问公网地址试探网关劫持」这一步；
 - `--quiet` 现在只静音控制台，**文件日志始终完整**。
+
+---
+
+## 9. 许可证
+
+本项目以 **MIT** 许可发布，详见 [`LICENSE`](LICENSE)。
+
+认证协议实现来自 [campusnet](https://github.com/demo133/campusnet)（MIT），
+其完整许可证见 [`LICENSE.campusnet`](LICENSE.campusnet)，
+源码副本与改动说明见 [`NOTICE.md`](NOTICE.md)。
+
+---
+
+## 10. 免责声明
+
+本工具仅用于**自己账号在自己设备上**的自动认证，目的是省去每次手动打开认证页的麻烦。
+
+- 请勿用于他人账号、批量代认证或任何绕过计费/认证机制的行为；
+- 自动认证会把账号密码保存在本机 `config.json`（明文），请自行评估风险；
+- 因使用本工具导致的账号异常、网络故障或与校方规定的冲突，由使用者自行承担。
+

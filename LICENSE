@@ -19,13 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
--------------------------------------------------------------------------------
-本项目的网络认证协议实现来自以下开源项目，同样以 MIT 许可发布：
-
-  campusnet — https://github.com/demo133/campusnet
-  Copyright (c) 2026 campusnet contributors
-  Licensed under the MIT License (完整文本见 LICENSE.campusnet)
-
-`campusnet/` 目录为其原始代码的副本，并包含本项目针对特定校园网环境所做的
-修改；每处修改都在代码注释中写明了原因。
