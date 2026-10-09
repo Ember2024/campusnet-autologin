@@ -1,0 +1,20 @@
+# 统一换行规范，避免 Windows/Linux 之间来回改行尾导致整文件 diff
+# PowerShell 脚本必须保留 CRLF（PS 5.1 对混合换行会解析出错）
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# 其余文本文件入库统一用 LF
+*.py   text eol=lf
+*.md   text eol=lf
+*.json text eol=lf
+*.txt  text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
+
+# 二进制/压缩包不做任何转换
+*.zip  binary
+*.exe  binary
+*.ico  binary
+*.png  binary
+*.jpg  binary
