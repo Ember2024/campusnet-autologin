@@ -38,3 +38,6 @@ daemon/
 .idea/
 Thumbs.db
 desktop.ini
+
+# Release 附件（zip/config 示例），只上传到 GitHub Release，不进仓库
+release/
