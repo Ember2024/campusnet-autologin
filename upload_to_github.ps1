@@ -85,6 +85,16 @@ try {
         $remoteUrl = "git@${sshAlias}:$Owner/$Repo.git"
         Write-Ok "检测到 SSH 别名 $sshAlias，改用 SSH：$remoteUrl"
 
+        # 关键：Git for Windows 自带的是 MSYS 版 ssh，在部分受限环境里会因为
+        # 无法创建命名管道而崩（couldn't create signal pipe, Win32 error 5）。
+        # 改用 Windows 系统自带的 OpenSSH（不依赖 MSYS 运行时）即可绕开。
+        $systemSsh = 'C:\Windows\System32\OpenSSH\ssh.exe'
+        if (Test-Path -LiteralPath $systemSsh) {
+            $env:GIT_SSH = $systemSsh
+            $env:GIT_SSH_VARIANT = 'ssh'
+            Write-Host "    已指定 GIT_SSH = $systemSsh" -ForegroundColor Gray
+        }
+
         # 验证这个别名确实能认证成目标账号
         $probe = & ssh -T -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20 "git@$sshAlias" 2>&1 | Out-String
         if ($probe -match "Hi $Owner!") {
