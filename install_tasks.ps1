@@ -557,7 +557,15 @@ if ($registered.Count -lt 3) {
 
 Write-Host ""
 Write-Host "常用命令：" -ForegroundColor White
-Write-Host "  立即认证一次    : python `"$RunLogin`"" -ForegroundColor Gray
+if ($UseExe) {
+    # exe 模式下提示 python 命令会让人以为还得装 Python，这里按实际模式给命令
+    Write-Host "  立即认证一次    : & `"$RunLoginExe`" --config `"$ConfigPath`"" -ForegroundColor Gray
+    Write-Host "  强制重新认证    : & `"$RunLoginExe`" --config `"$ConfigPath`" --force" -ForegroundColor Gray
+    Write-Host "  守护自检一轮    : & `"$DaemonExe`" --config `"$ConfigPath`" --once-check" -ForegroundColor Gray
+} else {
+    Write-Host "  立即认证一次    : python `"$RunLogin`" --config `"$ConfigPath`"" -ForegroundColor Gray
+    Write-Host "  强制重新认证    : python `"$RunLogin`" --config `"$ConfigPath`" --force" -ForegroundColor Gray
+}
 Write-Host "  查看状态        : powershell -File `"$(Join-Path $ProjectDir 'status.ps1')`"" -ForegroundColor Gray
 Write-Host "  卸载全部任务    : powershell -File `"$(Join-Path $ProjectDir 'uninstall_tasks.ps1')`"" -ForegroundColor Gray
 Write-Host "  日志目录        : $(Join-Path $ProjectDir 'logs')" -ForegroundColor Gray
