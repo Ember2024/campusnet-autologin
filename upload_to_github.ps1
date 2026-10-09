@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     一键把本项目上传到 GitHub（含 push 与 Release）。
 
@@ -95,10 +95,39 @@ try {
             Write-Host "    已指定 GIT_SSH = $systemSsh" -ForegroundColor Gray
         }
 
-        # 验证这个别名确实能认证成目标账号
-        $probe = & ssh -T -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20 "git@$sshAlias" 2>&1 | Out-String
+        # 验证这个别名确实能认证成目标账号。
+        #
+        # 这里刻意把 stderr 重定向到**临时文件**，而不是用 `2>&1`：
+        #   · `ssh -T` 用退出码 1 表示「认证成功但 GitHub 不提供 shell」；
+        #   · 认证成功的问候语（Hi <用户名>! You've successfully authenticated...）
+        #     是写到 **stderr** 的。
+        # 脚本开头设了 $ErrorActionPreference='Stop'，而 PowerShell 会把本机命令的
+        # stderr 包装成 NativeCommandError —— 用 `2>&1` 时它仍会作为错误记录输出，
+        # 轻则刷一屏红字，重则直接终止脚本（实测踩到过）。
+        # 落盘再读，是唯一干净且稳定的做法。
+        $probe = ""
+        $probeFile = [System.IO.Path]::GetTempFileName()
+        try {
+            $sshArgs = @('-T', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=accept-new',
+                         '-o', 'ConnectTimeout=20', "git@$sshAlias")
+            $oldEap = $ErrorActionPreference
+            try {
+                $ErrorActionPreference = 'Continue'
+                & ssh @sshArgs 2>$probeFile | Out-Null
+            } finally {
+                $ErrorActionPreference = $oldEap
+            }
+            if (Test-Path -LiteralPath $probeFile) {
+                $probe = (Get-Content -LiteralPath $probeFile -Raw -ErrorAction SilentlyContinue)
+            }
+        } catch {
+            $probe = "$_"
+        } finally {
+            Remove-Item -LiteralPath $probeFile -Force -ErrorAction SilentlyContinue
+        }
+
         if ($probe -match "Hi $Owner!") {
-            Write-Ok "SSH 认证成功：$($probe.Trim())"
+            Write-Ok "SSH 认证成功（身份：$Owner）"
         } else {
             Write-Warn2 "SSH 探测输出不符合预期：$($probe.Trim())"
             Write-Warn2 "若后续 push 失败，请加 -UseHttps 重试。"
@@ -160,6 +189,38 @@ try {
     }
 
     # ---------------------------------------------------------------- 3) push
+    # 提交前先自检 .ps1 的编码。PowerShell 5.1 遇到缺 BOM 或 LF 换行的脚本，
+    # 会把中文读成乱码并报出一堆**假**的语法错误（本项目踩过两次）。
+    Write-Step "自检 PowerShell 脚本编码…"
+    $checker = Join-Path $ProjectDir 'tools\check_ps1.py'
+    $foundPython = ""
+    $candidates = @("$env:USERPROFILE\.pyenv\pyenv-win\versions\3.12.9\python.exe")
+    $cmdPy = Get-Command python.exe -ErrorAction SilentlyContinue
+    if ($cmdPy) { $candidates += $cmdPy.Source }
+    foreach ($cand in $candidates) {
+        if ($cand -and (Test-Path -LiteralPath $cand)) { $foundPython = $cand; break }
+    }
+
+    if ($foundPython -and (Test-Path -LiteralPath $checker)) {
+        & $foundPython $checker
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warn2 "有脚本编码不合规，尝试自动修复…"
+            & $foundPython $checker --fix
+            if ($LASTEXITCODE -ne 0) {
+                Write-Err "自动修复失败，请检查上面的文件后再推。"
+                exit 1
+            }
+            git add -A 2>$null | Out-Null
+            git -c core.safecrlf=false commit -m "style: 统一 .ps1 为 UTF-8 BOM + CRLF" 2>&1 | Out-Null
+            Write-Ok "已修复并自动提交"
+        } else {
+            Write-Ok "编码自检通过"
+        }
+    } else {
+        Write-Warn2 "跳过编码自检（缺 Python 或 tools\check_ps1.py）"
+        Write-Host "    .gitattributes 已把 *.ps1 标为 binary，避免入库时行尾被改。" -ForegroundColor Gray
+    }
+
     Write-Step "推送 main …"
     git push -u origin main
     if ($LASTEXITCODE -ne 0) {

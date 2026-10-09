@@ -1,8 +1,15 @@
 # 统一换行规范，避免 Windows/Linux 之间来回改行尾导致整文件 diff
-# PowerShell 脚本必须保留 CRLF（PS 5.1 对混合换行会解析出错）
-*.ps1 text eol=crlf
-*.bat text eol=crlf
-*.cmd text eol=crlf
+#
+# PowerShell 脚本标为 binary：绝不参与任何行尾转换。
+#
+# 为什么不用 `*.ps1 text eol=crlf`：那样只能保证**工作区**是 CRLF，
+# 而 Windows PowerShell 5.1 还要求文件带 UTF-8 BOM（否则按 ANSI 读，
+# 中文变乱码并报出一堆假的语法错误）。BOM 不是行尾属性，Git 管不了，
+# 靠 text 转换反而会在某些操作里破坏文件。标成 binary 最稳，
+# 真正的强制手段是提交前的自检：`python tools/check_ps1.py`。
+*.ps1 binary
+*.bat binary
+*.cmd binary
 
 # 其余文本文件入库统一用 LF
 *.py   text eol=lf
