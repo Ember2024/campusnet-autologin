@@ -2,17 +2,8 @@
 # -*- coding: utf-8 -*-
 """校验（并可选修复）PowerShell 脚本的编码与换行。
 
-为什么需要这个脚本
-------------------
-Windows PowerShell 5.1 读取 ``.ps1`` 时：
-
-* **没有 UTF-8 BOM** 就按系统 ANSI 代码页（简体中文 Windows 是 GBK）解读，
-  于是脚本里的中文全部乱码，解析器随即报出
-  ``缺少右"}"`` / ``意外的标记`` 之类**与真实问题毫无关系**的语法错误；
-* **换行不一致**（CRLF 与 LF 混用）同样会让多行语句解析失败。
-
-本项目已经被这个坑绊了两次：每次用编辑器改完 ``.ps1``，BOM 会被去掉、
-换行会被改成 LF，然后脚本在 PowerShell 5.1 里直接崩。因此把它固化成检查项。
+项目脚本使用 PowerShell 7，沿用 UTF-8 BOM + CRLF 的文件格式。
+本检查只检查编码和换行，不代替 PowerShell 解析器的语法检查。
 
 用法
 ----
@@ -23,7 +14,6 @@ Windows PowerShell 5.1 读取 ``.ps1`` 时：
 from __future__ import annotations
 
 import argparse
-import io
 import os
 import sys
 
@@ -38,7 +28,8 @@ def ps1_files(root: str):
         # 跳过版本库与打包产物
         dirnames[:] = [d for d in dirnames
                        if d not in (".git", "build", "dist", "release",
-                                    "__pycache__", "run_login", "daemon")]
+                                    "__pycache__", "run_login", "run_login_hidden",
+                                    "daemon", "campusnet_app")]
         for name in sorted(filenames):
             if name.lower().endswith(".ps1"):
                 yield os.path.join(dirpath, name)
@@ -111,11 +102,11 @@ def main() -> int:
         if args.fix:
             print("[x] 以下文件修复失败：{}".format(", ".join(bad)))
         else:
-            print("[x] {} 个脚本会破坏 PowerShell 5.1 解析：{}".format(len(bad), ", ".join(bad)))
+            print("[x] {} 个脚本格式不合规：{}".format(len(bad), ", ".join(bad)))
             print("    修复：python tools/check_ps1.py --fix")
         return 1
 
-    print("[+] 全部 {} 个脚本均为 UTF-8 BOM + CRLF，PowerShell 5.1 可正常解析".format(len(files)))
+    print("[+] 全部 {} 个脚本均为 UTF-8 BOM + CRLF".format(len(files)))
     return 0
 
 

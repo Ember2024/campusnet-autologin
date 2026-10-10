@@ -29,8 +29,9 @@
     只 push，不创建 Release。
 
 .EXAMPLE
-    powershell -ExecutionPolicy Bypass -File .\upload_to_github.ps1
+    pwsh -NoProfile -ExecutionPolicy Bypass -File .\upload_to_github.ps1
 #>
+#requires -Version 7.0
 [CmdletBinding()]
 param(
     [string]$Owner = 'Ember2024',
@@ -189,8 +190,7 @@ try {
     }
 
     # ---------------------------------------------------------------- 3) push
-    # 提交前先自检 .ps1 的编码。PowerShell 5.1 遇到缺 BOM 或 LF 换行的脚本，
-    # 会把中文读成乱码并报出一堆**假**的语法错误（本项目踩过两次）。
+    # 提交前检查项目约定的 UTF-8 BOM + CRLF 格式；脚本运行要求 PowerShell 7。
     Write-Step "自检 PowerShell 脚本编码…"
     $checker = Join-Path $ProjectDir 'tools\check_ps1.py'
     $foundPython = ""
@@ -241,13 +241,14 @@ try {
     Write-Step "创建 Release $Tag …"
 
     $assets = @()
-    foreach ($name in 'run_login.zip', 'daemon.zip', 'config.example.json') {
+    foreach ($name in 'campusnet-windows.zip') {
         $path = Join-Path $ReleaseDir $name
         if (Test-Path -LiteralPath $path) {
             $assets += $path
             Write-Host ("    附件：{0}  ({1:N2} MB)" -f $name, ((Get-Item $path).Length / 1MB)) -ForegroundColor Gray
         } else {
-            Write-Warn2 "缺少附件：$name（可先跑 build_exe.ps1 再重新打包）"
+            Write-Err "缺少附件：$name。请先运行 build_exe.ps1。"
+            exit 1
         }
     }
 

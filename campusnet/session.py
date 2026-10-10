@@ -25,6 +25,11 @@ DEFAULT_TIMEOUT = 8
 Data = Union[None, bytes, str, Dict[str, str], Iterable[Tuple[str, str]]]
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
 class HttpError(Exception):
     """连接层面的异常（超时、DNS 失败、拒绝连接等）。"""
 
@@ -95,15 +100,17 @@ class Session:
         self,
         timeout: int = DEFAULT_TIMEOUT,
         use_proxy: bool = False,
-        verify_tls: bool = False,
+        verify_tls: bool = True,
         user_agent: str = DEFAULT_UA,
         retries: int = 1,
         logger=None,
+        request_guard=None,
     ) -> None:
         self.timeout = timeout
         self.user_agent = user_agent
         self.retries = max(0, retries)
         self.logger = logger or (lambda *a, **k: None)
+        self.request_guard = request_guard
 
         handlers = []
         if not use_proxy:
@@ -113,7 +120,8 @@ class Session:
             ctx.check_hostname = False
             ctx.verify_mode = ssl.CERT_NONE
             handlers.append(urllib.request.HTTPSHandler(context=ctx))
-        self._opener = urllib.request.build_opener(*handlers)
+        self._opener = urllib.request.build_opener(*handlers, _NoRedirect())
+        self._redirect_opener = urllib.request.build_opener(*handlers)
 
     # ---------------------------------------------------------------- 请求
     def request(
@@ -143,7 +151,10 @@ class Session:
             try:
                 self.logger("  → {} {}".format(method, url))
                 req = urllib.request.Request(url, data=body, headers=hdrs, method=method)
-                resp = self._opener.open(req, timeout=timeout or self.timeout)
+                opener = self._redirect_opener if allow_redirects else self._opener
+                if self.request_guard is not None:
+                    self.request_guard()
+                resp = opener.open(req, timeout=timeout or self.timeout)
             except urllib.error.HTTPError as exc:
                 # HTTP 错误码也是有效响应（门户常靠 3xx/4xx 表达状态）
                 resp = exc
@@ -155,7 +166,7 @@ class Session:
 
             raw = self._read(resp)
             status = getattr(resp, "status", None) or getattr(resp, "code", 0)
-            result = Response(status, dict(resp.headers.items()), raw, url)
+            result = Response(status, dict(resp.headers.items()), raw, resp.geturl())
             self.logger("  ← {} {} ({} bytes)".format(status, url, len(raw)))
             return result
 

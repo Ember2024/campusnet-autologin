@@ -4,7 +4,7 @@
 
 1. **劫持探测** —— ``generate_204`` 这类地址在真正联网时必须返回 204；
    被 Portal 拦截时会变成 302 或直接吐登录页 HTML。
-2. **真实内容校验** —— 抓一个正常网页并检查内容标记。
+2. **真实内容校验** —— 读取公共网站的小型 HTTPS 文件并检查内容标记。
    学校经常把探测地址加进白名单，只看第 1 关会误判为"已联网"。
 """
 
@@ -13,6 +13,7 @@ from __future__ import annotations
 import platform
 import re
 import subprocess
+from urllib.parse import urljoin, urlsplit
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence, Tuple
 
@@ -28,11 +29,12 @@ HIJACK_PROBES: Sequence[Tuple[str, int, Optional[str]]] = (
     ("http://www.msftconnecttest.com/connecttest.txt", 200, "Microsoft Connect Test"),
 )
 
-#: (地址, 正文必须包含的标记) —— 真实内容校验
+#: Small public files keep the 15-second checks inexpensive. HTTPS redirects
+#: within the same site are normal (for example www.bing.com -> cn.bing.com).
 CONTENT_PROBES: Sequence[Tuple[str, str]] = (
-    ("http://www.baidu.com", "baidu"),
-    ("http://www.qq.com", "qq"),
-    ("http://www.bing.com", "bing"),
+    ("https://www.qq.com/robots.txt", "user-agent:"),
+    ("https://www.baidu.com/robots.txt", "user-agent:"),
+    ("https://www.bing.com/robots.txt", "user-agent:"),
 )
 
 
@@ -79,23 +81,26 @@ def check_online(session: Session, portal_hint: str = "") -> NetStatus:
 
     for url, expect, marker in HIJACK_PROBES:
         try:
-            resp = session.get(url, timeout=5)
+            resp = session.get(url, timeout=3, allow_redirects=False)
         except HttpError as exc:
             status.detail = str(exc)
             continue
 
         location = resp.location
-        if location and location.startswith("http"):
-            status.portal_url = location
+        if location:
+            status.portal_url = urljoin(resp.url, location)
         elif not hijack_ok and _looks_like_portal(resp):
             status.portal_url = resp.url
             status.status = resp.status
 
         if resp.status == expect and not location:
-            if marker is None or marker.lower() in resp.text.lower():
+            if (marker is None and not resp.body) or (
+                marker is not None and marker.casefold() == resp.text.strip().casefold()
+            ):
                 hijack_ok = True
                 status.probe = url
                 status.status = resp.status
+                break
 
     if not hijack_ok:
         if not status.detail:
@@ -106,16 +111,27 @@ def check_online(session: Session, portal_hint: str = "") -> NetStatus:
 
     for url, marker in CONTENT_PROBES:
         try:
-            resp = session.get(url, timeout=5)
+            resp = session.get(url, timeout=3, allow_redirects=True)
         except HttpError:
             continue
-        if resp.status == 200 and not resp.location and marker in resp.text.lower():
+        if (resp.status == 200 and not resp.location and _same_https_site(url, resp.url)
+                and marker in resp.text.lower()):
             status.online = True
+            status.portal_url = ""
             status.detail = ""
             return status
 
     status.detail = "能过劫持探测，但抓不到真实网页内容（可能被白名单）"
     return status
+
+
+def _same_https_site(requested: str, final: str) -> bool:
+    source, target = urlsplit(requested), urlsplit(final)
+    domain = (source.hostname or "").removeprefix("www.")
+    hostname = target.hostname or ""
+    return bool(domain) and target.scheme == "https" and (
+        hostname == domain or hostname.endswith("." + domain)
+    )
 
 
 def _looks_like_portal(resp: Response) -> bool:

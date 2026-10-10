@@ -64,8 +64,7 @@ class RuijieProvider(Provider):
         self._used_fallback = False
 
         for origin in self.origins(portal):
-            query_string = (self.opt("query_string", "")
-                            or self._fetch_query_string(origin, ip, portal_url=portal))
+            query_string = self._fetch_query_string(origin, ip, portal_url=portal)
             payload = {
                 "userId": username,
                 "password": password,
@@ -133,6 +132,9 @@ class RuijieProvider(Provider):
                 resp = self.session.get(path, headers={"Referer": origin + "/"})
             except Exception:  # noqa: BLE001
                 continue
+            found = self._query_from_url(resp.location or "")
+            if found:
+                return found
             text = resp.text or ""
             found = self._query_from_text(text)
             if found:
@@ -141,6 +143,9 @@ class RuijieProvider(Provider):
         # 3) 兜底自拼。注意 nasip 只能留空 —— 填门户 URL 必定被判「设备未注册」。
         #    这一步拿到的 queryString 多半会被门户拒绝，所以置一个标记，
         #    由 login() 在失败信息里把补救办法告诉用户。
+        configured = self.opt("query_string", "")
+        if configured:
+            return configured
         self._used_fallback = True
         return "wlanuserip={ip}&wlanacname=&nasip=&t=wireless-v2".format(ip=ip)
 

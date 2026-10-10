@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import os
 import platform
-import stat
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
@@ -32,11 +31,7 @@ def default_config_path() -> str:
 
 @dataclass
 class Config:
-    """一份配置。
-
-    ``password`` 一般情况下是空的 —— 只有当用户显式 ``--save-password``
-    或者从环境变量读到密码时才会被填充。
-    """
+    """外置配置；加载与读取凭据不会发起交互或修改配置文件。"""
 
     username: str = ""
     password: str = ""
@@ -65,20 +60,16 @@ class Config:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any], path: str = "") -> "Config":
+        if not isinstance(data, dict):
+            raise ValueError("配置顶层必须是 JSON 对象")
         cfg = cls(path=path)
         for key in cls.FIELDS:
             if key in data and data[key] is not None:
                 setattr(cfg, key, data[key])
-        cfg.options = dict(cfg.options or {})
+        if not isinstance(cfg.options, dict):
+            raise ValueError("options 必须是 JSON 对象")
+        cfg.options = dict(cfg.options)
         return cfg
-
-    def to_dict(self, include_password: bool = False) -> Dict[str, Any]:
-        out: Dict[str, Any] = {}
-        for key in self.FIELDS:
-            if key == "password" and not include_password:
-                continue
-            out[key] = getattr(self, key)
-        return out
 
     # ------------------------------------------------------------ 读写
     @classmethod
@@ -86,7 +77,7 @@ class Config:
         path = path or default_config_path()
         data: Dict[str, Any] = {}
         if os.path.exists(path):
-            with open(path, "r", encoding="utf-8") as fh:
+            with open(path, "r", encoding="utf-8-sig") as fh:
                 try:
                     data = json.load(fh)
                 except ValueError as exc:
@@ -94,21 +85,6 @@ class Config:
         cfg = cls.from_dict(data, path=path)
         cfg.apply_env()
         return cfg
-
-    def save(self, path: Optional[str] = None, include_password: Optional[bool] = None) -> str:
-        path = path or self.path or default_config_path()
-        if include_password is None:
-            include_password = bool(self.password) and self.password_source == "config"
-        directory = os.path.dirname(path)
-        if directory:
-            os.makedirs(directory, exist_ok=True)
-        with open(path, "w", encoding="utf-8") as fh:
-            json.dump(self.to_dict(include_password=include_password), fh, ensure_ascii=False, indent=2)
-            fh.write("\n")
-        self.path = path
-        if not include_password and os.name != "nt":
-            _restrict(path, 0o600)
-        return path
 
     # ------------------------------------------------------------ 环境变量
     def apply_env(self) -> "Config":
@@ -127,7 +103,7 @@ class Config:
 
     # ------------------------------------------------------------ 取密码
     def resolve_password(self, prompt: bool = False, allow_keyring: bool = True) -> str:
-        """按 环境变量 → 钥匙串 → 配置文件 → 交互输入 的顺序取密码。"""
+        """按环境变量 → 钥匙串 → 配置文件取密码；永不提示输入。"""
         env = os.environ.get(ENV_PASSWORD)
         if env:
             self.password_source = "env"
@@ -144,29 +120,13 @@ class Config:
                 self.password_source = "config"
             return self.password
 
-        if prompt:
-            import getpass
-
-            self.password_source = "prompt"
-            return getpass.getpass("校园网密码：")
-
         return ""
-
-    def masked(self) -> str:
-        return "已设置（来自 {}）".format(self.password_source or "未知") if self.password else "未设置"
 
 
 # -------------------------------------------------------------------- 工具
 def load_config(path: Optional[str] = None) -> Config:
     """便捷函数：``Config.load()`` 的别名。"""
     return Config.load(path)
-
-
-def _restrict(path: str, mode: int) -> None:
-    try:
-        os.chmod(path, mode)
-    except OSError:
-        pass
 
 
 def _keyring_get(username: str) -> str:
@@ -180,30 +140,3 @@ def _keyring_get(username: str) -> str:
         return keyring.get_password(APP_NAME, username) or ""
     except Exception:  # noqa: BLE001 - 钥匙串后端经常抽风，静默降级
         return ""
-
-
-def _keyring_set(username: str, password: str) -> bool:
-    try:
-        import keyring  # type: ignore
-    except ImportError:
-        return False
-    try:
-        keyring.set_password(APP_NAME, username, password)
-        return True
-    except Exception:  # noqa: BLE001
-        return False
-
-
-def has_keyring() -> bool:
-    try:
-        import keyring  # type: ignore  # noqa: F401
-    except ImportError:
-        return False
-    return True
-
-
-def file_is_world_readable(path: str) -> bool:
-    if os.name == "nt" or not os.path.exists(path):
-        return False
-    mode = os.stat(path).st_mode
-    return bool(mode & (stat.S_IRGRP | stat.S_IROTH))

@@ -21,16 +21,15 @@ __pycache__/
 
 # ============================================================
 #  打包产物
-#  体积大（每个约 20 MB，含整个 Python 运行时），不进仓库。
-#  要发给别人请走 GitHub Releases：
-#    gh release create v1.0.0 --title "..." --notes-file RELEASE_NOTES.md \
-#      run_login.zip daemon.zip config.example.json
+#  含完整 Python 运行时；发布附件为 release/campusnet-windows.zip。
 # ============================================================
 build/
 dist/
 *.spec
 run_login/
+run_login_hidden/
 daemon/
+campusnet_app/
 *.zip
 
 # 编辑器 / 系统垃圾

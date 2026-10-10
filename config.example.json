@@ -1,43 +1,15 @@
-# 校园网自动认证 —— 配置示例
-#
-# 用法：把本文件复制成 config.json，然后按注释改掉下面的值。
-#
-#   PowerShell:  Copy-Item config.example.json config.json
-#   CMD:         copy config.example.json config.json
-#
-# ⚠️ config.json 已经在 .gitignore 里（因为它要存明文密码），不会被提交。
-#    但正因为如此，**请不要把真正的 config.json 发给别人或传进任何仓库**。
-
 {
   "username": "你的上网账号",
-
   "password": "你的密码",
-
   "provider": "ruijie",
-
   "portal_ip": "http://192.168.24.65",
-
   "wifi_ssid": "tjus_wifi",
-
-  "verify_url": "http://connect.rom.miui.com/generate_204",
-
   "timeout": 8,
-
   "use_proxy": false,
-
   "options": {
     "service": "",
-
     "query_string": "",
-
-    "wifi_timeout": 30,
-    "wifi_attempts": 3,
-    "wifi_retry_delay": 5,
-    "wifi_ready_timeout": 40,
-    "wifi_warmup": 300,
-    "wifi_warmup_gap": 15,
-    "wifi_retry_gap": 60,
-    "wifi_settle_delay": 3,
+    "online_check_seconds": 15,
     "verify_delay": 2
   }
 }
