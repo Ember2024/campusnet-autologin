@@ -2,6 +2,7 @@
 
 from pathlib import Path
 import queue
+import re
 import threading
 
 from .daemon import Daemon
@@ -23,6 +24,20 @@ STATUS = {
 }
 
 
+def _soft_wrap_text(value):
+    """让 URL 和长标点串提供换行机会，避免标签把窗口横向撑出。"""
+    text = str(value or "")
+    return re.sub(r"([:/?&=;,:：，。])", lambda match: match.group(1) + "\u200b", text)
+
+
+def _display_text(value, limit=100):
+    """限制状态区文本高度，同时保留足够的门户错误信息供排查。"""
+    text = str(value or "")
+    if len(text) > limit:
+        text = text[: max(1, limit - 1)] + "…"
+    return _soft_wrap_text(text)
+
+
 class SettingsWindow:
     def __init__(self, config_path, log, signal, background=False):
         import tkinter as tk
@@ -37,6 +52,8 @@ class SettingsWindow:
         self.last_state = {}
         self.tray = None
         self.worker = None
+        self._fit_scheduled = False
+        self._updating_wrap = False
         self.root = tk.Tk()
         self.root.withdraw()
         try:
@@ -45,7 +62,8 @@ class SettingsWindow:
         except Exception:
             self._window_icon = None
         self.root.title("校园网 · 账号设置")
-        self.root.resizable(False, False)
+        # 宽度保持紧凑；提示较长时允许窗口增高，避免底部按钮被裁切。
+        self.root.resizable(True, True)
         self.root.configure(background="#f5f7fb")
         self.root.protocol("WM_DELETE_WINDOW", self.hide)
         self.root.report_callback_exception = self._callback_error
@@ -86,6 +104,8 @@ class SettingsWindow:
         content = ttk.Frame(self.root, padding=28)
         content.grid(sticky="nsew")
         content.columnconfigure(0, weight=1)
+        self.root.columnconfigure(0, weight=1)
+        self.root.rowconfigure(0, weight=1)
         ttk.Label(content, text="校园网", style="Title.TLabel").grid(sticky="w")
         ttk.Label(content, text="自动登录，安心保持连接", style="Muted.TLabel").grid(
             sticky="w", pady=(4, 22))
@@ -94,8 +114,9 @@ class SettingsWindow:
         self.status_label = ttk.Label(content, textvariable=self.status_text, foreground="#64748b")
         self.status_label.grid(sticky="w")
         self.detail_text = tk.StringVar(value="仅在连接 tjus_wifi 时自动登录")
-        ttk.Label(content, textvariable=self.detail_text, style="Muted.TLabel",
-                  wraplength=370).grid(sticky="w", pady=(5, 20))
+        self.detail_label = ttk.Label(content, textvariable=self.detail_text, style="Muted.TLabel",
+                                      wraplength=370, justify="left", anchor="w")
+        self.detail_label.grid(sticky="ew", pady=(5, 20))
         ttk.Separator(content).grid(sticky="ew", pady=(0, 20))
 
         self.username, self.password = tk.StringVar(), tk.StringVar()
@@ -112,30 +133,100 @@ class SettingsWindow:
                         command=self._toggle_password).grid(sticky="w", pady=(9, 8))
         self.feedback_text = tk.StringVar(value="")
         self.feedback_label = ttk.Label(content, textvariable=self.feedback_text,
-                                        style="Muted.TLabel", wraplength=370)
-        self.feedback_label.grid(sticky="w", pady=(2, 12))
+                                        style="Muted.TLabel", wraplength=370,
+                                        justify="left", anchor="w")
+        self.feedback_label.grid(sticky="ew", pady=(2, 12))
         buttons = ttk.Frame(content)
         buttons.grid(sticky="ew")
         buttons.columnconfigure(0, weight=1)
+        buttons.columnconfigure(1, weight=1)
         ttk.Button(buttons, text="保存并应用", style="Primary.TButton",
                    command=self.save).grid(row=0, column=0, sticky="ew", padx=(0, 10))
-        ttk.Button(buttons, text="收起到托盘", command=self.hide).grid(row=0, column=1)
+        ttk.Button(buttons, text="收起到托盘", command=self.hide).grid(
+            row=0, column=1, sticky="ew")
         ttk.Label(content, text="关闭窗口后，仍会在托盘中自动检查网络。",
-                  style="Muted.TLabel").grid(sticky="w", pady=(20, 0))
+                  style="Muted.TLabel", wraplength=370, justify="left", anchor="w").grid(
+                      sticky="ew", pady=(20, 0))
         self.root.bind("<Return>", lambda _event: self.save())
         self.root.bind("<Escape>", lambda _event: self.hide())
+        self.root.bind("<Configure>", self._on_configure)
         self.root.update_idletasks()
-        width, height = self.root.winfo_reqwidth(), self.root.winfo_reqheight()
-        x = max(0, (self.root.winfo_screenwidth() - width) // 2)
-        y = max(0, (self.root.winfo_screenheight() - height) // 2)
-        self.root.geometry("{}x{}+{}+{}".format(width, height, x, y))
+        self._minimum_width = self.root.winfo_reqwidth()
+        self._minimum_height = self.root.winfo_reqheight()
+        self._fit_window(center=True)
+
+    def _update_wraplength(self, width=None):
+        if self._updating_wrap:
+            return
+        width = width or self.root.winfo_width()
+        if width <= 1:
+            return
+        wraplength = max(240, width - 56)
+        current = self.detail_label.cget("wraplength")
+        if current == wraplength:
+            return
+        self._updating_wrap = True
+        try:
+            for label in (self.detail_label, self.feedback_label):
+                label.configure(wraplength=wraplength)
+        finally:
+            self._updating_wrap = False
+
+    def _on_configure(self, event):
+        if event.widget is not self.root or self.closing:
+            return
+        self._update_wraplength(event.width)
+        if self.root.winfo_viewable() and not self._fit_scheduled:
+            self._fit_scheduled = True
+            self.root.after_idle(self._fit_after_resize)
+
+    def _fit_after_resize(self):
+        self._fit_scheduled = False
+        if not self.closing:
+            self._fit_window()
+
+    def _fit_window(self, center=False):
+        """按当前提示文字增高窗口，并保持用户调整后的位置。"""
+        self.root.update_idletasks()
+        self._update_wraplength()
+        requested_width = max(self._minimum_width, self.root.winfo_reqwidth())
+        requested_height = max(self._minimum_height, self.root.winfo_reqheight())
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        max_width = max(320, screen_width - 40)
+        max_height = max(320, screen_height - 64)
+        self.root.minsize(min(self._minimum_width, max_width),
+                          min(self._minimum_height, max_height))
+        current_width = self.root.winfo_width()
+        current_height = self.root.winfo_height()
+        if current_width <= 1:
+            current_width = requested_width
+        if current_height <= 1:
+            current_height = requested_height
+        width = min(max_width, max(self._minimum_width, current_width))
+        if center:
+            width = min(max_width, requested_width)
+            height = min(max_height, requested_height)
+        else:
+            height = min(max_height, max(self._minimum_height, current_height, requested_height))
+        if center:
+            x = max(0, (screen_width - width) // 2)
+            y = max(0, (screen_height - height) // 2)
+        else:
+            x = min(max(0, self.root.winfo_x()), max(0, screen_width - width))
+            y = min(max(0, self.root.winfo_y()), max(0, screen_height - height))
+        geometry = "{}x{}+{}+{}".format(width, height, x, y)
+        current_geometry = self.root.geometry()
+        if current_geometry != geometry:
+            self.root.geometry(geometry)
 
     def _toggle_password(self):
         self.password_entry.configure(show="" if self.show_password.get() else "●")
 
     def _feedback(self, text, error=False):
-        self.feedback_text.set(text)
+        self.feedback_text.set(_display_text(text))
         self.feedback_label.configure(foreground="#b91c1c" if error else "#16834b")
+        self._fit_window()
 
     def _callback_error(self, kind, _value, _traceback):
         self.log("界面操作失败：" + kind.__name__, "error")
@@ -163,6 +254,7 @@ class SettingsWindow:
             return
         self.root.deiconify()
         self.root.state("normal")
+        self._fit_window(center=True)
         self.root.lift()
         self.root.focus_force()
         self.username_entry.focus_set()
@@ -200,7 +292,9 @@ class SettingsWindow:
                 title, color = STATUS.get(action.get("state"), ("正在运行", "#64748b"))
                 self.status_text.set("●  " + title)
                 self.status_label.configure(foreground=color)
-                self.detail_text.set(action.get("message") or "仅在连接 tjus_wifi 时自动登录")
+                self.detail_text.set(_display_text(
+                    action.get("message") or "仅在连接 tjus_wifi 时自动登录"))
+                self._fit_window()
                 self.tray.update("校园网 · " + title)
         self.root.after(200, self._poll)
 
