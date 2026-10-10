@@ -47,15 +47,17 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 
 安装后，Windows 在当前用户登录桌面时通过启动项 `CampusNet-AutoLogin` 直接以 `--background` 启动安装目录中的 EXE，只显示托盘图标。启动项位于 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`，程序以当前用户权限运行。
 
+安装脚本会在当前用户桌面创建“校园网自动登录”快捷方式；卸载时只删除确认指向本程序的快捷方式。
+
 正常安装不需要管理员权限。若检测到本项目旧版计划任务，安装脚本会请求一次 UAC 来清理旧任务；日常自启动直接运行 EXE。
 
 三个管理脚本都支持 `-InstallDir <路径>` 指定安装目录；使用自定义目录时保持参数一致。`campusnet_app` 中的 `_internal` 是运行依赖，需要与 EXE 一起保留。
 
 ## 账号设置与托盘
 
-手动打开 `%LOCALAPPDATA%\Programs\CampusNet\campusnet_app\campusnet.exe`，填写账号和密码后点击“保存并应用”。后台会在下一轮检查中使用新配置；若正在认证，会先完成本轮。
+安装后桌面会创建“校园网自动登录”快捷方式，点击即可打开设置窗口。也可手动打开 `%LOCALAPPDATA%\Programs\CampusNet\campusnet_app\campusnet.exe`，填写账号和密码后点击“保存并应用”。后台会在下一轮检查中使用新配置；若正在认证，会先完成本轮。
 
-- 双击托盘图标，或右键选择“账号设置”，可再次打开设置窗口。
+- 单击或双击托盘图标，或右键选择“账号设置”，可再次打开设置窗口。
 - 关闭设置窗口只收起界面，后台检查和自动认证继续运行。
 - 右键选择“退出程序”会停止本次运行。下次登录 Windows 仍会自启；取消自启请使用卸载脚本。
 

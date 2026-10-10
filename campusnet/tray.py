@@ -326,7 +326,7 @@ class TrayIcon:
             return 0
         if message == _WM_TRAY:
             event = lparam & 0xffff
-            if event in (0x0203, 0x0401):  # double-click or keyboard activation
+            if event in (0x0202, 0x0203, 0x0400, 0x0401):  # click, select, double-click, or keyboard
                 self.on_open()
             elif event in (0x0205, 0x007b):  # right-click / version-4 context menu
                 self._menu()

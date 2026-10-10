@@ -35,6 +35,8 @@ $ConfigPath = Join-Path $ProjectDir 'config.json'
 $LogDir = Join-Path $ProjectDir 'logs'
 $RunKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
 $StartupKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run'
+$DesktopPath = [Environment]::GetFolderPath([Environment+SpecialFolder]::Desktop)
+$DesktopShortcut = Join-Path $DesktopPath '校园网自动登录.lnk'
 $RunName = 'CampusNet-AutoLogin'
 $BackgroundArguments = '--background --config "' + $ConfigPath + '"'
 $RunCommand = '"' + $Executable + '" ' + $BackgroundArguments
@@ -59,6 +61,7 @@ $result = [ordered]@{
     ok = $false; operation = $(if ($CleanupLegacyOnly) { 'cleanup_legacy' } else { 'install' })
     phase = 'preflight'; dry_run = [bool]$DryRun; executable = $Executable; install_dir = $ProjectDir; source_dir = $SourceDir
     run_key = $RunKey; run_name = $RunName; run_command = $RunCommand
+    desktop_shortcut = $DesktopShortcut; desktop_shortcut_created = $false
     legacy_tasks = @(); cleanup = $null; started = $false; error = ''
 }
 $runWritten = $false
@@ -131,6 +134,39 @@ function Read-IntegrityLabel([string]$Path) {
     if ($LASTEXITCODE -ne 0) { throw "无法检查完整性标签：$Path" }
     $text = $output -join [Environment]::NewLine
     return @{ path = $Path; low = ($text -match 'S-1-16-(?:0|4096)\b|Low Mandatory|Untrusted Mandatory|低强制|低完整性|不受信任'); output = $text }
+}
+
+function Assert-DesktopShortcutAvailable {
+    if (-not (Test-Path -LiteralPath $DesktopShortcut -PathType Leaf)) { return }
+    $shortcutShell = New-Object -ComObject WScript.Shell
+    try {
+        $shortcut = $shortcutShell.CreateShortcut($DesktopShortcut)
+        $target = [IO.Path]::GetFullPath([string]$shortcut.TargetPath)
+        if (-not [string]::Equals($target, $Executable, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "桌面已存在同名快捷方式，且目标不是本程序：$DesktopShortcut"
+        }
+    } finally { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($shortcutShell) }
+}
+
+function New-DesktopShortcut {
+    $shortcutShell = New-Object -ComObject WScript.Shell
+    try {
+        $shortcut = $shortcutShell.CreateShortcut($DesktopShortcut)
+        $shortcut.TargetPath = $Executable
+        $shortcut.Arguments = '--config "' + $ConfigPath + '"'
+        $shortcut.WorkingDirectory = $ProjectDir
+        $shortcut.Description = '打开校园网账号设置'
+        $shortcut.IconLocation = $Executable + ',0'
+        $shortcut.WindowStyle = 1
+        $shortcut.Save()
+        $verified = $shortcutShell.CreateShortcut($DesktopShortcut)
+        if (-not [string]::Equals([IO.Path]::GetFullPath([string]$verified.TargetPath),
+                $Executable, [StringComparison]::OrdinalIgnoreCase) -or
+            $verified.Arguments -ne $shortcut.Arguments) {
+            throw '桌面快捷方式复核失败。'
+        }
+        return $true
+    } finally { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($shortcutShell) }
 }
 
 function Stop-InstallProcesses {
@@ -304,6 +340,7 @@ try {
         }
         $previousRun = if (Test-Path -LiteralPath $RunKey) { (Get-Item -LiteralPath $RunKey).GetValue($RunName) } else { $null }
         $previousStartup = if (Test-Path -LiteralPath $StartupKey) { (Get-Item -LiteralPath $StartupKey).GetValue($RunName) } else { $null }
+        Assert-DesktopShortcutAvailable
         $sourceRunCommand = '"' + $SourceExecutable + '" --background --config "' + $SourceConfig + '"'
         $legacySourceRunCommand = '"' + $SourceExecutable + '" --config "' + $SourceConfig + '"'
         if ($previousRun -and $previousRun -notin @($RunCommand, $LegacyRunCommand, $sourceRunCommand, $legacySourceRunCommand)) {
@@ -335,6 +372,7 @@ try {
             $startupWritten = $true
             if ((Get-ItemPropertyValue -LiteralPath $StartupKey -Name $RunName)[0] -ne 2) { throw 'Windows 启动项启用状态复核失败。' }
             $result.startup_approved = 'enabled'
+            $result.desktop_shortcut_created = New-DesktopShortcut
             if (-not $NoStart) {
                 $shell.ShellExecute($Executable, $BackgroundArguments, $ProjectDir, 'open', 0)
                 Wait-Started

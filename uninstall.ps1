@@ -1,7 +1,7 @@
 ﻿#requires -Version 7.0
 <#
 .SYNOPSIS
-删除当前用户的校园网登录启动项并停止 EXE，保留程序、配置和日志。
+删除当前用户的校园网登录启动项和本程序桌面快捷方式并停止 EXE，保留程序、配置和日志。
 #>
 [CmdletBinding()]
 param([switch]$DryRun, [string]$ResultPath = '', [string]$InstallDir = '')
@@ -23,17 +23,28 @@ $ConfigPath = Join-Path $ProjectDir 'config.json'
 $LogDir = Join-Path $ProjectDir 'logs'
 $RunKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
 $StartupKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run'
+$DesktopPath = [Environment]::GetFolderPath([Environment+SpecialFolder]::Desktop)
+$DesktopShortcut = Join-Path $DesktopPath '校园网自动登录.lnk'
 $RunName = 'CampusNet-AutoLogin'
 $RunCommand = '"' + $Executable + '" --background --config "' + $ConfigPath + '"'
 $LegacyRunCommand = '"' + $Executable + '" --config "' + $ConfigPath + '"'
 if (-not $ResultPath) { $ResultPath = Join-Path $LogDir 'uninstall-result.json' }
 $ResultPath = [IO.Path]::GetFullPath($ResultPath)
-$result = [ordered]@{ ok = $false; operation = 'uninstall'; dry_run = [bool]$DryRun; install_dir = $ProjectDir; run_removed = $false; stopped_pids = @(); cleanup = $null; error = '' }
+$result = [ordered]@{ ok = $false; operation = 'uninstall'; dry_run = [bool]$DryRun; install_dir = $ProjectDir; run_removed = $false; desktop_shortcut_removed = $false; stopped_pids = @(); cleanup = $null; error = '' }
 
 try {
     $value = if (Test-Path -LiteralPath $RunKey) { (Get-Item -LiteralPath $RunKey).GetValue($RunName) } else { $null }
     if ($value -and $value -notin @($RunCommand, $LegacyRunCommand)) { throw '同名 Windows 启动项指向其他路径，未修改。' }
     $result.run_present = [bool]$value
+    if (Test-Path -LiteralPath $DesktopShortcut -PathType Leaf) {
+        $shortcutShell = New-Object -ComObject WScript.Shell
+        try {
+            $shortcut = $shortcutShell.CreateShortcut($DesktopShortcut)
+            $shortcutTarget = [IO.Path]::GetFullPath([string]$shortcut.TargetPath)
+            $result.desktop_shortcut_owned = [string]::Equals($shortcutTarget, $Executable,
+                [StringComparison]::OrdinalIgnoreCase)
+        } finally { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($shortcutShell) }
+    } else { $result.desktop_shortcut_owned = $false }
     $cleanupPath = Join-Path $LogDir ('uninstall-cleanup-' + [Guid]::NewGuid().ToString('N') + '.json')
     $arguments = @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File',
         (Join-Path $SourceDir 'install.ps1'), '-CleanupLegacyOnly', '-InstallDir', $ProjectDir, '-ResultPath', $cleanupPath)
@@ -45,6 +56,10 @@ try {
     $result.legacy_tasks = @($cleanup.legacy_tasks)
     $result.cleanup = $cleanup.cleanup
     if (-not $DryRun) {
+        if ($result.desktop_shortcut_owned) {
+            Remove-Item -LiteralPath $DesktopShortcut -Force
+            $result.desktop_shortcut_removed = $true
+        }
         if ($value) { Remove-ItemProperty -LiteralPath $RunKey -Name $RunName; $result.run_removed = $true }
         if ((Test-Path -LiteralPath $StartupKey) -and $null -ne (Get-Item -LiteralPath $StartupKey).GetValue($RunName)) {
             Remove-ItemProperty -LiteralPath $StartupKey -Name $RunName
