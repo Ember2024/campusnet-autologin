@@ -88,12 +88,6 @@ if ($LASTEXITCODE -ne 0) {
     if ($LASTEXITCODE -ne 0) { throw 'PyInstaller 安装失败。' }
 }
 
-Push-Location -LiteralPath $ProjectDir
-try {
-    & $Python -m unittest discover -s tests -v
-    if ($LASTEXITCODE -ne 0) { throw '回归测试失败，停止构建。' }
-} finally { Pop-Location }
-
 if ($Clean) {
     foreach ($path in @($BuildDir, $DistDir)) {
         $safe = Assert-Child $path

@@ -118,7 +118,7 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\uninstall.ps1
 
 ## 从源码构建
 
-使用 Windows、PowerShell 7 和 Python 3.12。构建脚本会运行测试，使用 PyInstaller 生成一个无窗口 `onedir` 程序，并检查冻结程序的诊断模式。
+使用 Windows、PowerShell 7 和 Python 3.12。构建脚本使用 PyInstaller 生成一个无窗口 `onedir` 程序，并检查冻结程序的诊断模式。
 
 ```powershell
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\build_exe.ps1
@@ -131,7 +131,6 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\build_exe.ps1
 ```powershell
 python -m campusnet --background --config .\config.json
 python -m campusnet --once --config .\config.json
-python -m unittest discover -s tests -v
 python tools/check_ps1.py
 ```
 
