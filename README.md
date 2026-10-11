@@ -116,7 +116,7 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\status.ps1
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\uninstall.ps1
 ```
 
-从源码目录、解压目录或安装目录运行卸载脚本，默认都操作上述用户安装目录；自定义安装请加 `-InstallDir <路径>`。卸载会取消本项目自启并停止对应进程，保留程序、配置和日志。
+从源码目录、解压目录或安装目录运行卸载脚本，默认都操作上述用户安装目录；自定义安装请加 `-InstallDir <路径>`。卸载会取消本项目自启、清理旧版计划任务、停止对应进程、移除本程序桌面快捷方式，并删除整个安装目录（程序、配置、日志和备份）。卸载结果默认保存在 Windows 临时目录。可先加 `-DryRun` 预检，不会执行删除。
 
 ## 从源码构建
 
