@@ -1,4 +1,4 @@
-"""Read the connected Wi-Fi SSID without changing any network settings."""
+"""Read and observe Wi-Fi connections without changing network settings."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ from ctypes import wintypes
 from contextlib import contextmanager
 from dataclasses import dataclass
 import os
+import threading
 import uuid
 
 
@@ -26,6 +27,139 @@ class WifiResult:
 class _Guid(ctypes.Structure):
     _fields_ = [("data1", wintypes.DWORD), ("data2", wintypes.WORD),
                 ("data3", wintypes.WORD), ("data4", ctypes.c_ubyte * 8)]
+
+
+class _NotificationData(ctypes.Structure):
+    _fields_ = [("source", wintypes.DWORD), ("code", wintypes.DWORD),
+                ("interface", _Guid), ("size", wintypes.DWORD),
+                ("data", ctypes.c_void_p)]
+
+
+class _Dot11Ssid(ctypes.Structure):
+    _fields_ = [("length", wintypes.ULONG), ("bytes", ctypes.c_ubyte * 32)]
+
+
+class _ConnectionNotificationPrefix(ctypes.Structure):
+    # WLAN_CONNECTION_NOTIFICATION_DATA up to dot11Ssid; profile XML is unused.
+    _fields_ = [("mode", ctypes.c_int), ("profile", wintypes.WCHAR * 256),
+                ("ssid", _Dot11Ssid)]
+
+
+class WifiWatcher:
+    """Signal connected/disconnected SSIDs through Native Wi-Fi notifications.
+
+    on_change runs on a Windows callback thread and must only signal work;
+    start/close must be called outside that callback. ACM notifications do not
+    require the location permission associated with MSM notifications.
+    """
+
+    _ACM = 0x00000008
+    _CONNECTION_COMPLETE = 10
+    _DISCONNECTED = 21
+
+    def __init__(self, on_change, logger=None):
+        self._on_change = on_change
+        self._logger = logger
+        self._api = None
+        self._handle = wintypes.HANDLE()
+        self._callback = None
+        self._active = False
+        self._lifecycle = threading.Lock()
+
+    def start(self) -> bool:
+        if os.name != "nt":
+            return False
+        with self._lifecycle:
+            if self._handle.value:
+                return self._active
+            try:
+                self._api = ctypes.WinDLL("wlanapi.dll")
+                self._api.WlanOpenHandle.argtypes = [wintypes.DWORD, ctypes.c_void_p,
+                                                    ctypes.POINTER(wintypes.DWORD),
+                                                    ctypes.POINTER(wintypes.HANDLE)]
+                self._api.WlanOpenHandle.restype = wintypes.DWORD
+                self._api.WlanRegisterNotification.argtypes = [
+                    wintypes.HANDLE, wintypes.DWORD, wintypes.BOOL,
+                    ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p,
+                    ctypes.POINTER(wintypes.DWORD)]
+                self._api.WlanRegisterNotification.restype = wintypes.DWORD
+                self._api.WlanCloseHandle.argtypes = [wintypes.HANDLE, ctypes.c_void_p]
+                self._api.WlanCloseHandle.restype = wintypes.DWORD
+                version = wintypes.DWORD()
+                error = self._api.WlanOpenHandle(2, None, ctypes.byref(version),
+                                                 ctypes.byref(self._handle))
+                if error:
+                    raise OSError(error, ctypes.FormatError(error))
+                callback_type = ctypes.WINFUNCTYPE(None, ctypes.POINTER(_NotificationData),
+                                                   ctypes.c_void_p)
+                # Keep the ctypes callback alive until Windows releases the handle.
+                self._callback = callback_type(self._notify)
+                self._active = True
+                error = self._api.WlanRegisterNotification(
+                    self._handle, self._ACM, True, self._callback, None, None, None)
+                if error:
+                    raise OSError(error, ctypes.FormatError(error))
+                self._log("Wi-Fi 连接事件监听已启用")
+                return True
+            except (OSError, AttributeError) as error:
+                self._warn("Wi-Fi 事件监听不可用，继续定时检查：%s", error)
+                self._release()
+                return False
+
+    def _notify(self, notification, context):
+        if not self._active or not notification:
+            return
+        try:
+            data = notification.contents
+            if data.source != self._ACM or data.code not in (
+                    self._CONNECTION_COMPLETE, self._DISCONNECTED):
+                return
+            if not data.data or data.size < ctypes.sizeof(_ConnectionNotificationPrefix):
+                return
+            connection = ctypes.cast(data.data, ctypes.POINTER(_ConnectionNotificationPrefix)).contents
+            length = connection.ssid.length
+            if not 0 < length <= 32:
+                return
+            ssid = bytes(connection.ssid.bytes[:length]).decode("utf-8", errors="replace")
+            self._on_change(ssid)
+        except Exception:
+            # Exceptions must not escape a ctypes callback into Windows.
+            self._warn("处理 Wi-Fi 变化通知失败，继续定时检查")
+
+    def close(self):
+        with self._lifecycle:
+            self._release()
+
+    def _release(self):
+        self._active = False
+        if not self._handle.value:
+            return
+        # Native unregister/close wait for callbacks; callbacks never take
+        # _lifecycle, otherwise exit could deadlock here.
+        error = self._api.WlanRegisterNotification(
+            self._handle, 0, True, None, None, None, None)
+        if error:
+            self._warn("注销 Wi-Fi 事件监听失败：%s", error)
+        error = self._api.WlanCloseHandle(self._handle, None)
+        if error:
+            # Retain the callback if Windows still owns the handle, allowing
+            # a later close to retry without exposing a freed function pointer.
+            self._warn("关闭 Wi-Fi 事件监听失败：%s", error)
+            return
+        self._handle = wintypes.HANDLE()
+        self._callback = None
+        self._api = None
+
+    def _warn(self, message, *args):
+        self._log(message % args if args else message, level="warn")
+
+    def _log(self, message, level="info"):
+        if self._logger:
+            try:
+                self._logger(message, level=level)
+            except Exception:
+                # Logging failure must not disable polling or prevent cleanup.
+                pass
 
 
 def current_ssid() -> str:

@@ -8,6 +8,7 @@ import time
 
 from .runner import RunResult
 from .singleton import ProcessLock
+from .wifi import WifiWatcher
 
 RETRY_DELAYS = (5, 15, 30, 60)
 
@@ -20,6 +21,9 @@ class Daemon:
         self._logger = logger
         self.reload_runner = reload_runner
         self._reload_requested = threading.Event()
+        self._wake = threading.Event()
+        self._network_lock = threading.Lock()
+        self._network_revision = 0
         if reload_runner is not None:
             self._reload_requested.set()
         self.publish = publish or (lambda state: None)
@@ -31,6 +35,14 @@ class Daemon:
     def request_reload(self):
         """供设置窗口调用；只发送信号，认证及 Runner 替换始终在守护线程。"""
         self._reload_requested.set()
+        self._wake.set()
+
+    def request_network_check(self, ssid=""):
+        """Wi-Fi 回调只唤醒守护；新连接在下一轮重新确认后才允许认证。"""
+        if ssid and ssid == self.state["target_ssid"]:
+            with self._network_lock:
+                self._network_revision += 1
+        self._wake.set()
 
     def _reload(self):
         self._reload_requested.clear()
@@ -49,17 +61,13 @@ class Daemon:
         self.state["ssid"] = ""
 
     def _wait(self, stop, seconds):
-        if self.reload_runner is None:
-            # 保留原有 stop_event 等待协议，旧调用无需额外的唤醒事件。
-            stop.wait(seconds)
-            return
         deadline = time.monotonic() + seconds
-        while not stop.is_set() and not self._reload_requested.is_set():
+        while not stop.is_set() and not self._reload_requested.is_set() and not self._wake.is_set():
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 return
-            # 配置保存立即唤醒；同时每 250ms 响应应用退出。
-            self._reload_requested.wait(min(remaining, 0.25))
+            # 网络变化、配置保存立即唤醒；同时每 250ms 响应应用退出。
+            self._wake.wait(min(remaining, 0.25))
 
     def update(self, state, **fields):
         self.state.update(fields, state=state, heartbeat=datetime.now(timezone.utc).isoformat())
@@ -73,11 +81,14 @@ class Daemon:
         if not lock.acquire():
             self.log("守护已在运行，本次启动退出")
             return 0
+        watcher = WifiWatcher(self.request_network_check, logger=self.log)
         try:
             self.update("starting")
+            watcher.start()
             self.watch(stop_event)
             return 0
         finally:
+            watcher.close()
             self.update("stopped", next_retry_seconds=0)
             lock.release()
 
@@ -86,8 +97,16 @@ class Daemon:
         gap = float(self.runner.cfg.options.get("online_check_seconds", 15)) if self.runner is not None else 15
         retries, next_attempt = 0, 0.0
         previous, connected = None, False
+        network_revision = 0
         self.log("守护启动：每 {:g} 秒检查，失败按 5/15/30/60 秒重试".format(gap))
         while not stop.is_set():
+            self._wake.clear()
+            with self._network_lock:
+                revision = self._network_revision
+            if revision != network_revision:
+                network_revision = revision
+                # 即使 SSID 未变，断开后快速重连也属于新连接，立即检查。
+                retries, next_attempt, connected = 0, 0.0, False
             if self._reload_requested.is_set():
                 self._reload()
                 retries, next_attempt, previous, connected = 0, 0.0, None, False
